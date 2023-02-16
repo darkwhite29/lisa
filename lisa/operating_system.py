@@ -24,6 +24,7 @@ from assertpy import assert_that
 from retry import retry
 from semver import VersionInfo
 
+from lisa import notifier
 from lisa.base_tools import (
     AptAddRepository,
     Cat,
@@ -383,6 +384,17 @@ class Posix(OperatingSystem, BaseClassMixin):
         )
 
         if self._node.is_test_target:
+            if self._node._first_initialize:
+                from lisa.tools import SystemdAnalyze
+
+                try:
+                    systemd_analyze_tool = self._node.tools[SystemdAnalyze]
+                    boot_time = systemd_analyze_tool.get_boot_time()
+                    boot_time.information.update(self._node.get_information())
+                    notifier.notify(boot_time)
+                except Exception as identifier:
+                    self._node.log.debug(f"error on get boot time: {identifier}")
+
             from lisa.tools import Chmod, Find
 
             find_tool = self._node.tools[Find]
@@ -1433,6 +1445,8 @@ class Redhat(Fedora):
         install_result = self._node.execute(
             command, shell=True, sudo=True, timeout=timeout
         )
+        if self._no_repo_enabled.search(install_result.stdout):
+            raise RepoNotExistException(self._node.os)
         # RedHat will fail package installation is a single missing package is
         # detected, therefore we check the output to see if we were missing
         # a package. If so, fail. Otherwise we will warn in verify package result.
@@ -1460,17 +1474,7 @@ class Redhat(Fedora):
         return 0 == result.exit_code
 
     def _get_information(self) -> OsInformation:
-        # The higher version above 7.0 support os-version.
         try:
-            information = super(Fedora, self)._get_information()
-
-            # remove Linux Server in vendor
-            information.vendor = get_matched_str(
-                information.vendor, self.__vendor_pattern
-            )
-        except Exception:
-            # Parse /etc/redhat-release to support 6.x and 8.x. Refer to
-            # examples of __legacy_redhat_information_pattern.
             cmd_result = self._node.execute(
                 cmd="cat /etc/redhat-release", no_error_log=True, expected_exit_code=0
             )
@@ -1485,6 +1489,11 @@ class Redhat(Fedora):
                 codename=matches.group("codename"),
                 full_version=full_version,
             )
+        except Exception:
+            information = super(Fedora, self)._get_information()
+
+        # remove Linux Server in vendor
+        information.vendor = get_matched_str(information.vendor, self.__vendor_pattern)
 
         return information
 
