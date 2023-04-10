@@ -89,7 +89,7 @@ libvirt = [
 ]
 
 mypy = [
-    "mypy == 1.0.0",
+    "mypy == 1.2.0",
 ]
 
 pylint = [
