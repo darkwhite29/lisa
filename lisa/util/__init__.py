@@ -1,8 +1,10 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import ipaddress
 import random
 import re
+import requests
 import string
 import sys
 from datetime import datetime
@@ -26,6 +28,7 @@ import pluggy
 from assertpy import assert_that
 from dataclasses_json import config
 from marshmallow import fields
+from retry import retry
 from semver import VersionInfo
 
 from lisa import secret
@@ -674,3 +677,40 @@ def check_till_timeout(
         sleep(interval)
     if timer.elapsed() >= timeout:
         raise LisaException(f"timeout: {timeout_message}")
+
+
+@retry(tries=10, delay=0.5)  # type: ignore
+def get_public_ip() -> str:
+    """
+    Get the public IP address of the current machine.
+
+    This function tries to fetch the public IP from api.ipify.org first.
+    If that fails, it falls back to ipinfo.io/ip.
+
+    Returns:
+        str: The public IP address as a string.
+
+    Raises:
+        LisaException: If both services fail to return a valid IP address.
+    """
+    # Try primary service: api.ipify.org
+    try:
+        response = requests.get("https://api.ipify.org/", timeout=5)
+        response.raise_for_status()
+        result = response.text.strip()
+        # Validate that the result is a valid IP address
+        ipaddress.ip_address(result)
+        return result
+    except Exception:
+        # If primary service fails, try fallback: ipinfo.io/ip
+        try:
+            response = requests.get("http://ipinfo.io/ip", timeout=5)
+            response.raise_for_status()
+            result = response.text.strip()
+            # Validate that the result is a valid IP address
+            ipaddress.ip_address(result)
+            return result
+        except Exception as e:
+            raise LisaException(
+                f"Failed to get public IP from both api.ipify.org and ipinfo.io: {e}"
+            )
